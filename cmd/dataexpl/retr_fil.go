@@ -10,29 +10,27 @@ import (
 	"github.com/filecoin-project/lassie/pkg/net/host"
 	"github.com/filecoin-project/lassie/pkg/retriever"
 	types2 "github.com/filecoin-project/lassie/pkg/types"
+	"github.com/gorilla/mux"
 	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
+	offline "github.com/ipfs/go-ipfs-exchange-offline"
+	format "github.com/ipfs/go-ipld-format"
 	"github.com/ipfs/go-merkledag"
 	"github.com/ipfs/go-unixfsnode"
+	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	basicnode "github.com/ipld/go-ipld-prime/node/basic"
+	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
 	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
+	"golang.org/x/xerrors"
 	"io"
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
-
-	"github.com/gorilla/mux"
-	offline "github.com/ipfs/go-ipfs-exchange-offline"
-	format "github.com/ipfs/go-ipld-format"
-	"github.com/ipld/go-ipld-prime/codec/dagjson"
-	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
-	"golang.org/x/xerrors"
 
 	lapi "github.com/filecoin-project/lotus/api"
 	bstore "github.com/filecoin-project/lotus/blockstore"
@@ -111,36 +109,6 @@ func (h *dxhnd) getFilRetrieval(bsb *ctbstore.TempBsb, r *http.Request, ma addre
 		}
 
 		return root, ds, links, done, err
-	}
-}
-
-func (h *dxhnd) listenRetrievalUpdates(ctx context.Context) {
-topLoop:
-	for {
-		if ctx.Err() != nil {
-			log.Warnw("stopping retrieval updates", "ctx", ctx.Err())
-			return
-		}
-
-		subscribeEvents, err := h.api.ClientGetRetrievalUpdates(ctx)
-		if err != nil {
-			log.Warnw("retrieval updates", "error", err)
-			time.Sleep(time.Second)
-			continue
-		}
-
-		for {
-			select {
-			case <-ctx.Done():
-				continue topLoop
-			case event, ok := <-subscribeEvents:
-				if !ok {
-					continue topLoop
-				}
-
-				h.filRetrPs.Pub(event, "events")
-			}
-		}
 	}
 }
 

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/filecoin-project/go-address"
+	"github.com/libp2p/go-libp2p/p2p/net/swarm"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/multiformats/go-multiaddr"
 	"golang.org/x/xerrors"
 	"net/http"
@@ -59,7 +61,7 @@ func (h *dxhnd) handlePingMiner(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
 		defer cancel()
 
-		if err := h.api.NetConnect(ctx, pi); err != nil {
+		if err := h.NetConnect(ctx, pi); err != nil {
 			h.trackerFil.RecordPing(a, 0, xerrors.Errorf("net connect: %w", err))
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -71,7 +73,7 @@ func (h *dxhnd) handlePingMiner(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	d, err := h.api.NetPing(ctx, pi.ID)
+	d, err := h.NetPing(ctx, pi.ID)
 	if err != nil {
 		h.trackerFil.RecordPing(a, time.Now().Sub(start), xerrors.Errorf("net ping: %w", err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -83,6 +85,22 @@ func (h *dxhnd) handlePingMiner(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(fmt.Sprintf("%s %s", pi.ID, d.Round(time.Millisecond))))
+}
+
+func (h *dxhnd) NetConnect(ctx context.Context, p peer.AddrInfo) error {
+	if swrm, ok := h.h.Network().(*swarm.Swarm); ok {
+		swrm.Backoff().Clear(p.ID)
+	}
+
+	return h.h.Connect(ctx, p)
+}
+
+func (h *dxhnd) NetPing(ctx context.Context, p peer.ID) (time.Duration, error) {
+	result, ok := <-ping.Ping(ctx, h.h, p)
+	if !ok {
+		return 0, xerrors.Errorf("didn't get ping result: %w", ctx.Err())
+	}
+	return result.RTT, result.Error
 }
 
 func (h *dxhnd) handlePingLotus(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +124,7 @@ func (h *dxhnd) handlePingLotus(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 
-		if err := h.api.NetConnect(ctx, pi); err != nil {
+		if err := h.NetConnect(ctx, pi); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -115,7 +133,7 @@ func (h *dxhnd) handlePingLotus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	d, err := h.api.NetPing(ctx, pi.ID)
+	d, err := h.NetPing(ctx, pi.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -202,7 +220,7 @@ func (h *dxhnd) pinger() {
 
 			{
 				ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-				err := h.api.NetConnect(ctx, pi)
+				err := h.NetConnect(ctx, pi)
 				cancel()
 				if err != nil {
 					h.trackerFil.RecordPing(a, 0, xerrors.Errorf("net connect: %w", err))
@@ -213,7 +231,7 @@ func (h *dxhnd) pinger() {
 			ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			start := time.Now()
 
-			d, err := h.api.NetPing(ctx, pi.ID)
+			d, err := h.NetPing(ctx, pi.ID)
 			cancel()
 			if err != nil {
 				h.trackerFil.RecordPing(a, time.Now().Sub(start), xerrors.Errorf("net ping: %w", err))

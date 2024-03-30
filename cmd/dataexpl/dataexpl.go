@@ -8,14 +8,18 @@ import (
 	"github.com/filecoin-project/cidtravel/ctbstore"
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/lotus/api/client"
+	"github.com/filecoin-project/lotus/chain/actors/adt"
+	"github.com/filecoin-project/lotus/chain/actors/builtin/market"
 	"github.com/filecoin-project/lotus/node/repo"
-	"github.com/filecoin-project/pubsub"
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/ipfs/go-cid"
+	cbor "github.com/ipfs/go-ipld-cbor"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/ipfs/go-merkledag"
 	"github.com/ipfs/go-unixfs"
 	"github.com/ipld/go-car"
+	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/urfave/cli/v2"
 	"html/template"
 	"io"
@@ -62,9 +66,11 @@ type marketMiner struct {
 }
 
 type dxhnd struct {
-	api    lapi.FullNode
-	ainfo  cliutil.APIInfo
+	api    lapi.Gateway
 	apiBss *apiBstoreServer
+	bs     bstore.Blockstore
+
+	h host.Host
 
 	chainStores []bstore.Blockstore
 
@@ -78,7 +84,6 @@ type dxhnd struct {
 	minerPids map[peer.ID]address.Address
 
 	tempBsBld *ctbstore.TempBsb
-	filRetrPs *pubsub.PubSub
 
 	trackerFil *TrackerFil
 }
@@ -214,15 +219,11 @@ var dataexplCmd = &cli.Command{
 			Required: true,
 			Aliases:  []string{"m"},
 		},
-		&cli.BoolFlag{
-			Name:  "local",
-			Usage: "set to true if running as a private instance",
-		},
 	},
 	Action: func(cctx *cli.Context) error {
 		logging.SetAllLoggers(logging.LevelInfo)
 
-		api, closer, err := cliutil.GetFullNodeAPIV1(cctx)
+		api, closer, err := cliutil.GetGatewayAPI(cctx)
 		if err != nil {
 			return err
 		}
@@ -258,11 +259,6 @@ var dataexplCmd = &cli.Command{
 			return xerrors.Errorf("could not get API info: %w", err)
 		}
 
-		mpcs, err := api.StateMarketParticipants(ctx, types.EmptyTSK)
-		if err != nil {
-			return xerrors.Errorf("getting market participants: %w", err)
-		}
-
 		var lk sync.Mutex
 		var wg sync.WaitGroup
 		var mminers []marketMiner
@@ -275,20 +271,35 @@ var dataexplCmd = &cli.Command{
 			return err
 		}
 
-		wg.Add(len(mpcs))
-		for sa, mb := range mpcs {
-			if mb.Locked.IsZero() {
-				wg.Done()
-				continue
+		head, err := api.ChainHead(ctx)
+		if err != nil {
+			return xerrors.Errorf("getting chain head: %w", err)
+		}
+
+		mktAct, err := api.StateGetActor(ctx, market.Address, head.Key())
+		if err != nil {
+			return xerrors.Errorf("getting market actor: %w", err)
+		}
+
+		stor := adt.WrapStore(ctx, cbor.NewCborStore(bstore.NewAPIBlockstore(api)))
+
+		mact, err := market.Load(stor, mktAct)
+		if err != nil {
+			return xerrors.Errorf("loading market actor: %w", err)
+		}
+
+		bt, err := mact.LockedTable()
+		if err != nil {
+			return xerrors.Errorf("getting locked table: %w", err)
+		}
+
+		err = bt.ForEach(func(a address.Address, mb abi.TokenAmount) error {
+			if mb.IsZero() {
+				return nil
 			}
 
-			a, err := address.NewFromString(sa)
-			if err != nil {
-				wg.Done()
-				return err
-			}
-
-			go func(a address.Address, mb lapi.MarketBalance) {
+			wg.Add(1)
+			go func(a address.Address, mb abi.TokenAmount) {
 				defer wg.Done()
 
 				mi, err := api.StateMinerInfo(ctx, a, types.EmptyTSK)
@@ -311,14 +322,17 @@ var dataexplCmd = &cli.Command{
 					Addr:   a,
 					Owner:  mi.Owner,
 					QAP:    types.SizeStr(mp.MinerPower.QualityAdjPower),
-					Locked: types.FIL(mb.Locked),
+					Locked: types.FIL(mb),
 				})
 
 				if mi.PeerId != nil {
 					pidMiners[*mi.PeerId] = a
 				}
 			}(a, mb)
-		}
+
+			return nil
+		})
+
 		wg.Wait()
 		sort.Slice(mminers, func(i, j int) bool {
 			return big.Cmp(abi.TokenAmount(mminers[i].Locked), abi.TokenAmount(mminers[j].Locked)) > 0
@@ -338,10 +352,16 @@ var dataexplCmd = &cli.Command{
 
 		dc, _ := lru.New(10_000_000)
 
+		h, err := libp2p.New()
+		if err != nil {
+			return err
+		}
+
 		dh := &dxhnd{
-			api:   api,
-			ainfo: ainfo,
-			idx:   idx,
+			api: api,
+			idx: idx,
+
+			h: h,
 
 			marketDealCache: dc,
 
@@ -350,14 +370,12 @@ var dataexplCmd = &cli.Command{
 			mminers:   mminers,
 			minerPids: pidMiners,
 
+			bs:        ctbstore.WithCache(bstore.NewAPIBlockstore(api)),
 			apiBss:    apiBss,
 			tempBsBld: ctbstore.NewTempBsBuilder(cctx.String("blk-cache")),
-			filRetrPs: pubsub.New(32),
 
 			trackerFil: tracker,
 		}
-
-		go dh.listenRetrievalUpdates(ctx)
 
 		m := mux.NewRouter()
 
@@ -384,9 +402,6 @@ var dataexplCmd = &cli.Command{
 		m.HandleFunc("/ping/miner/{id}", dh.handlePingMiner).Methods("GET")
 		m.HandleFunc("/ping/peer/ipfs/{id}", dh.handlePingIPFS).Methods("GET")
 		m.HandleFunc("/ping/peer/lotus/{id}", dh.handlePingLotus).Methods("GET")
-		if cctx.Bool("local") {
-			m.HandleFunc("/deals", dh.handleDeals).Methods("GET")
-		}
 		m.HandleFunc("/clients", dh.handleClients).Methods("GET")
 		m.HandleFunc("/client/{id}", dh.handleClient).Methods("GET")
 		m.HandleFunc("/provider/{id}", dh.handleProviderSectors).Methods("GET")

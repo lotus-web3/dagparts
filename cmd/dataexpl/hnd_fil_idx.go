@@ -2,14 +2,19 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/builtin"
 	"github.com/filecoin-project/index-provider/metadata"
 	"github.com/filecoin-project/lotus/api"
+	"github.com/filecoin-project/lotus/chain/actors/adt"
+	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
 	cliutil "github.com/filecoin-project/lotus/cli/util"
+	"github.com/hashicorp/go-multierror"
 	"github.com/ipfs/go-cid"
+	cbor "github.com/ipfs/go-ipld-cbor"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
@@ -152,31 +157,6 @@ func (h *dxhnd) handleProviderStats(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *dxhnd) handleDeals(w http.ResponseWriter, r *http.Request) {
-	deals, err := h.api.ClientListDeals(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	tpl, err := template.ParseFS(dres, "dexpl/client_deals.gohtml")
-	if err != nil {
-		fmt.Println(err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html")
-	w.WriteHeader(http.StatusOK)
-	data := map[string]interface{}{
-		"deals": deals,
-		//"StorageDealActive": storagemarket.StorageDealActive,
-	}
-	if err := tpl.Execute(w, data); err != nil {
-		fmt.Println(err)
-		return
-	}
-}
-
 func (h *dxhnd) handleClients(w http.ResponseWriter, r *http.Request) {
 	type clEntry struct {
 		Addr  address.Address
@@ -300,17 +280,94 @@ type DealInfo struct {
 	Size    string
 }
 
+func (h *dxhnd) StateMinerSectors(ctx context.Context, maddr address.Address) ([]*miner.SectorOnChainInfo, error) {
+	head, err := h.api.ChainHead(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	mAct, err := h.api.StateGetActor(ctx, maddr, head.Key())
+	if err != nil {
+		return nil, err
+	}
+
+	stor := adt.WrapStore(ctx, cbor.NewCborStore(h.bs))
+
+	mact, err := miner.Load(stor, mAct)
+	if err != nil {
+		return nil, err
+	}
+
+	var ms []*miner.SectorOnChainInfo
+	var wg sync.WaitGroup
+	var lk sync.Mutex
+
+	var perr error
+
+	err = mact.ForEachDeadline(func(idx uint64, dl miner.Deadline) error {
+		return dl.ForEachPartition(func(idx uint64, part miner.Partition) error {
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+
+				ls, err := part.LiveSectors()
+				if err != nil {
+					lk.Lock()
+					perr = multierror.Append(perr, err)
+					lk.Unlock()
+					return
+				}
+
+				err = ls.ForEach(func(i uint64) error {
+					wg.Add(1)
+
+					go func() {
+						defer wg.Done()
+
+						sec, err := mact.GetSector(abi.SectorNumber(i))
+						if err != nil {
+							lk.Lock()
+							perr = multierror.Append(perr, err)
+							lk.Unlock()
+							return
+						}
+
+						lk.Lock()
+						ms = append(ms, sec)
+						lk.Unlock()
+					}()
+
+					return nil
+				})
+				if err != nil {
+					lk.Lock()
+					perr = multierror.Append(perr, err)
+					lk.Unlock()
+					return
+				}
+			}()
+
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	wg.Wait()
+	if perr != nil {
+		return nil, perr
+	}
+
+	return ms, nil
+}
+
 func (h *dxhnd) handleProviderSectors(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	vars := mux.Vars(r)
 	ma, err := address.NewFromString(vars["id"])
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	ms, err := h.api.StateMinerSectors(ctx, ma, nil, types.EmptyTSK)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -328,6 +385,12 @@ func (h *dxhnd) handleProviderSectors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ms, err := h.StateMinerSectors(ctx, ma)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	var deals []abi.DealID
 	for _, info := range ms {
 		for _, d := range info.DealIDs {
@@ -335,10 +398,11 @@ func (h *dxhnd) handleProviderSectors(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	commps := map[abi.DealID]DealInfo{}
 	var wg sync.WaitGroup
-	wg.Add(len(deals))
 	var lk sync.Mutex
+
+	commps := map[abi.DealID]DealInfo{}
+	wg.Add(len(deals))
 
 	for _, deal := range deals {
 		go func(deal abi.DealID) {

@@ -134,7 +134,7 @@ func (h *dxhnd) handleMatchPiece(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	ms, err := h.api.StateMinerSectors(ctx, ma, nil, types.EmptyTSK)
+	ms, err := h.StateMinerSectors(ctx, ma)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
