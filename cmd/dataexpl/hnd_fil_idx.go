@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/builtin"
+	market14 "github.com/filecoin-project/go-state-types/builtin/v14/market"
+	adt14 "github.com/filecoin-project/go-state-types/builtin/v14/util/adt"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/chain/actors/adt"
+	market2 "github.com/filecoin-project/lotus/chain/actors/builtin/market"
 	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
 	cliutil "github.com/filecoin-project/lotus/cli/util"
 	"github.com/hashicorp/go-multierror"
@@ -18,6 +21,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
+	cbg "github.com/whyrusleeping/cbor-gen"
 	"golang.org/x/exp/constraints"
 	"html/template"
 	"net/http"
@@ -291,11 +295,47 @@ func (h *dxhnd) StateMinerSectors(ctx context.Context, maddr address.Address) ([
 		return nil, err
 	}
 
+	mkAct, err := h.api.StateGetActor(ctx, market2.Address, head.Key())
+	if err != nil {
+		return nil, err
+	}
+
 	stor := adt.WrapStore(ctx, cbor.NewCborStore(h.bs))
 
 	mact, err := miner.Load(stor, mAct)
 	if err != nil {
 		return nil, err
+	}
+
+	var m14 market14.State
+	if err := stor.Get(ctx, mkAct.Head, &m14); err != nil {
+		return nil, err
+	}
+
+	psa, err := adt14.AsMap(stor, m14.ProviderSectors, market14.ProviderSectorsHamtBitwidth)
+	if err != nil {
+		return nil, err
+	}
+
+	mid, err := address.IDFromAddress(maddr)
+	if err != nil {
+		return nil, err
+	}
+
+	var sarrRoot cbg.CborCid
+	ex, err := psa.Get(abi.UIntKey(mid), &sarrRoot)
+	if err != nil {
+		return nil, err
+	}
+	var sarr *adt14.Map
+	if ex {
+		sarr, err = adt14.AsMap(stor, cid.Cid(sarrRoot), market14.ProviderSectorsHamtBitwidth)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if sarr == nil {
+		log.Errorw("empty sall", "ma", maddr)
 	}
 
 	var ms []*miner.SectorOnChainInfo
@@ -331,6 +371,13 @@ func (h *dxhnd) StateMinerSectors(ctx context.Context, maddr address.Address) ([
 							perr = multierror.Append(perr, err)
 							lk.Unlock()
 							return
+						}
+
+						if len(sec.DealIDs) == 0 && !(sec.DealWeight.IsZero() && sec.VerifiedDealWeight.IsZero()) && sarr != nil {
+							var sids market14.SectorDealIDs
+							if _, err := sarr.Get(abi.UIntKey(i), &sids); err == nil {
+								sec.DealIDs = sids
+							}
 						}
 
 						lk.Lock()
