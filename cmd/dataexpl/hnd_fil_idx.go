@@ -365,7 +365,6 @@ func (h *dxhnd) StateMinerSectors(ctx context.Context, maddr address.Address) ([
 
 func (h *dxhnd) handleProviderSectors(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	vars := mux.Vars(r)
 	ma, err := address.NewFromString(vars["id"])
 	if err != nil {
@@ -465,14 +464,14 @@ func (h *dxhnd) handleProviderSectors(w http.ResponseWriter, r *http.Request) {
 				Filplus: md.Proposal.VerifiedDeal,
 				Size:    types.SizeStr(types.NewInt(uint64(md.Proposal.PieceSize))),
 			}
-
 			lk.Unlock()
 		}(deal)
 	}
 	wg.Wait()
 
 	// Filter out inactive deals from msPage
-	for _, m := range msPage {
+	for i := range msPage {
+		m := msPage[i]
 		filtered := make([]abi.DealID, 0, len(m.DealIDs))
 		for _, d := range m.DealIDs {
 			if _, found := commps[d]; found {
@@ -530,7 +529,6 @@ func (h *dxhnd) handleProviderSectors(w http.ResponseWriter, r *http.Request) {
 		"totalSectors": totalSectors,
 	}
 
-	// Update template functions
 	tpl, err := template.New("sectors.gohtml").Funcs(template.FuncMap{
 		"EpochTime": func(e abi.ChainEpoch) string {
 			return cliutil.EpochTime(now.Height(), e)
