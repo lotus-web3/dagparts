@@ -11,11 +11,10 @@ import (
 	txtempl "text/template"
 
 	"github.com/gorilla/mux"
+	"github.com/ipni/go-libipni/metadata"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/filecoin-project/go-state-types/abi"
-	"github.com/filecoin-project/index-provider/metadata"
-
 	"github.com/filecoin-project/lotus/chain/types"
 )
 

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/builtin"
-	"github.com/filecoin-project/index-provider/metadata"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/chain/actors/adt"
 	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
@@ -15,6 +14,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/ipfs/go-cid"
 	cbor "github.com/ipfs/go-ipld-cbor"
+	"github.com/ipni/go-libipni/metadata"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
@@ -590,11 +590,24 @@ func (h *dxhnd) handleDeal(w http.ResponseWriter, r *http.Request) {
 
 	for _, result := range resp.MultihashResults {
 		for _, providerResult := range result.ProviderResults {
-			var meta metadata.Metadata
-			if err := meta.UnmarshalBinary(providerResult.Metadata); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
+			if len(providerResult.Metadata) == 0 {
+				log.Errorw("empty provider")
+				continue
 			}
+
+			var meta metadata.Metadata
+
+			func() {
+				defer func() {
+					if e := recover(); e != nil {
+						log.Errorw("recovered", "e", e, "m", providerResult.Metadata)
+					}
+				}()
+				if err := meta.UnmarshalBinary(providerResult.Metadata); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}()
 
 			for _, proto := range meta.Protocols() {
 				switch meta.Get(proto).(type) {
