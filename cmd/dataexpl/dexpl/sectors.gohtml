@@ -33,7 +33,7 @@
         <tr><td><b>Raw</b></td><td>{{.raw}}</td></tr>
         <tr><td><b>PeerID</b></td><td>{{.info.PeerId}}</td></tr>
         {{range .addrs}}
-        <tr><td><b>Multiaddr</b></td><td>{{.}}</td></tr>
+            <tr><td><b>Multiaddr</b></td><td>{{.}}</td></tr>
         {{end}}
         <tr><td><b>Ping</b></td><td><span id="ping{{.maddr}}" onload="pingMiner()">pinging..</span></td></tr>
         <tr><td><b>Stats</b></td><td><a href="/provider/{{.maddr}}/stats">[VIEW STATS]</a></td></tr>
@@ -55,26 +55,37 @@
         })
     </script>
 
+    <!-- Pagination Controls -->
+    <div>
+        <span>Page {{.page}} of {{.totalPages}} (sectors {{add .startIdx 1}} to {{.endIdx}} of {{.totalSectors}})</span>
+        {{if gt .page 1}}
+            <a href="/provider/{{.maddr}}?page={{sub .page 1}}">Previous</a>
+        {{end}}
+        {{if lt .page .totalPages}}
+            <a href="/provider/{{.maddr}}?page={{add .page 1}}">Next</a>
+        {{end}}
+    </div>
+
     {{ $ma := .maddr }}
     {{ $deals := .deals }}
     {{range .sectors}}
         {{if (gt (len .DealIDs) 0)}}
-                <div class="snum-sector">
-                    <span>
-                        <span>{{.SectorNumber}}</span>
-                        <span class="snum-sector-activation">{{EpochTime .Activation}}</span>
-                        {{if ne nil .SectorKeyCID}}<span class="snum-sector-snap">snap</span>{{end}}
-                    </span>
-                    <div>
-                        {{range .DealIDs}}
-                            <div class="snum-deal">
-                                <div><a href="/deal/{{.}}">{{.}}</a> ({{ (index $deals .).Size }})</div>
-                                <div><span class="snum-dealclient">from <a href="/client/{{ (index $deals .).Client }}">{{ (index $deals .).Client }}</a></span>{{if eq true ((index $deals .).Filplus) }}<span class="snum-sector-plus"> F+</span>{{end}}</div>
-                                <div><span class="snum-dealcid">{{ (index $deals .).DealCID }}</span></div>
-                            </div>
-                        {{end}}
-                    </div>
+            <div class="snum-sector">
+                <span>
+                    <span>{{.SectorNumber}}</span>
+                    <span class="snum-sector-activation">{{EpochTime .Activation}}</span>
+                    {{if ne nil .SectorKeyCID}}<span class="snum-sector-snap">snap</span>{{end}}
+                </span>
+                <div>
+                    {{range .DealIDs}}
+                        <div class="snum-deal">
+                            <div><a href="/deal/{{.}}">{{.}}</a> ({{ (index $deals .).Size }})</div>
+                            <div><span class="snum-dealclient">from <a href="/client/{{ (index $deals .).Client }}">{{ (index $deals .).Client }}</a></span>{{if eq true ((index $deals .).Filplus) }}<span class="snum-sector-plus"> F+</span>{{end}}</div>
+                            <div><span class="snum-dealcid">{{ (index $deals .).DealCID }}</span></div>
+                        </div>
+                    {{end}}
                 </div>
+            </div>
         {{end}}
     {{end}}
 </div>

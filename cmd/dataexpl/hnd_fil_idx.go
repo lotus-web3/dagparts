@@ -373,6 +373,16 @@ func (h *dxhnd) handleProviderSectors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse 'page' query parameter
+	pageStr := r.URL.Query().Get("page")
+	page := 1
+	if pageStr != "" {
+		p, err := strconv.Atoi(pageStr)
+		if err == nil && p > 0 {
+			page = p
+		}
+	}
+
 	head, err := h.api.ChainHead(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -391,13 +401,37 @@ func (h *dxhnd) handleProviderSectors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sort sectors by SectorNumber descending
+	sort.Slice(ms, func(i, j int) bool {
+		return ms[i].SectorNumber > ms[j].SectorNumber
+	})
+
+	// Implement pagination
+	pageSize := 1000
+	totalSectors := len(ms)
+	totalPages := (totalSectors + pageSize - 1) / pageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	startIdx := (page - 1) * pageSize
+	endIdx := page * pageSize
+	if endIdx > totalSectors {
+		endIdx = totalSectors
+	}
+	msPage := ms[startIdx:endIdx]
+
+	// Collect DealIDs from msPage
 	var deals []abi.DealID
-	for _, info := range ms {
+	for _, info := range msPage {
 		for _, d := range info.DealIDs {
 			deals = append(deals, d)
 		}
 	}
 
+	// Process deals
 	var wg sync.WaitGroup
 	var lk sync.Mutex
 
@@ -437,8 +471,8 @@ func (h *dxhnd) handleProviderSectors(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 
-	// filter out inactive deals
-	for _, m := range ms {
+	// Filter out inactive deals from msPage
+	for _, m := range msPage {
 		filtered := make([]abi.DealID, 0, len(m.DealIDs))
 		for _, d := range m.DealIDs {
 			if _, found := commps[d]; found {
@@ -481,9 +515,31 @@ func (h *dxhnd) handleProviderSectors(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tpl, err := template.New("sectors.gohtml").Funcs(map[string]interface{}{
+	data := map[string]interface{}{
+		"maddr":        ma,
+		"sectors":      msPage,
+		"deals":        commps,
+		"info":         mi,
+		"addrs":        multiaddrs,
+		"qap":          types.SizeStr(mp.MinerPower.QualityAdjPower),
+		"raw":          types.SizeStr(mp.MinerPower.RawBytePower),
+		"page":         page,
+		"totalPages":   totalPages,
+		"startIdx":     startIdx,
+		"endIdx":       endIdx,
+		"totalSectors": totalSectors,
+	}
+
+	// Update template functions
+	tpl, err := template.New("sectors.gohtml").Funcs(template.FuncMap{
 		"EpochTime": func(e abi.ChainEpoch) string {
 			return cliutil.EpochTime(now.Height(), e)
+		},
+		"add": func(a, b int) int {
+			return a + b
+		},
+		"sub": func(a, b int) int {
+			return a - b
 		},
 	}).ParseFS(dres, "dexpl/sectors.gohtml")
 	if err != nil {
@@ -493,16 +549,6 @@ func (h *dxhnd) handleProviderSectors(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(http.StatusOK)
-	data := map[string]interface{}{
-		"maddr":   ma,
-		"sectors": ms,
-		"deals":   commps,
-		"info":    mi,
-		"addrs":   multiaddrs,
-
-		"qap": types.SizeStr(mp.MinerPower.QualityAdjPower),
-		"raw": types.SizeStr(mp.MinerPower.RawBytePower),
-	}
 	if err := tpl.Execute(w, data); err != nil {
 		fmt.Println(err)
 		return
