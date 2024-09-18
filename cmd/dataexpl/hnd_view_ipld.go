@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-merkledag"
@@ -13,6 +15,7 @@ import (
 	gopath "path"
 	"strings"
 	txtempl "text/template"
+	"time"
 
 	format "github.com/ipfs/go-ipld-format"
 	dagpb "github.com/ipld/go-codec-dagpb"
@@ -71,6 +74,11 @@ func (h *dxhnd) handleViewIPLD(w http.ResponseWriter, r *http.Request, node form
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	timedDs := &timeoutNg{
+		g:           dserv,
+		activeUntil: time.Now().Add(1 * time.Second),
 	}
 
 	var dumpNode func(n ipld.Node, p string) (string, error)
@@ -191,7 +199,7 @@ func (h *dxhnd) handleViewIPLD(w http.ResponseWriter, r *http.Request, node form
 				return "", fmt.Errorf("unexpected link type %#v", lnk)
 			}
 
-			ni, full, err := linkDesc(ctx, cl.Cid, gopath.Base(recPath), dserv)
+			ni, full, err := linkDesc(ctx, cl.Cid, gopath.Base(recPath), timedDs)
 			if err != nil {
 				return "", xerrors.Errorf("link desc: %w", err)
 			}
@@ -268,5 +276,27 @@ func (h *dxhnd) handleViewIPLD(w http.ResponseWriter, r *http.Request, node form
 		fmt.Println(err)
 		return
 	}
-
 }
+
+type timeoutNg struct {
+	g           format.NodeGetter
+	activeUntil time.Time
+}
+
+func (t *timeoutNg) Get(ctx context.Context, c cid.Cid) (format.Node, error) {
+	if time.Now().After(t.activeUntil) {
+		return nil, errors.New("expired")
+	}
+
+	return t.g.Get(ctx, c)
+}
+
+func (t *timeoutNg) GetMany(ctx context.Context, c []cid.Cid) <-chan *format.NodeOption {
+	if time.Now().After(t.activeUntil) {
+		return nil
+	}
+
+	return t.g.GetMany(ctx, c)
+}
+
+var _ format.NodeGetter = &timeoutNg{}

@@ -458,7 +458,7 @@ func parseLinks(ctx context.Context, ls []*format.Link, dserv format.DAGService,
 	return links, nil
 }
 
-func linkDesc(ctx context.Context, c cid.Cid, name string, dserv format.DAGService) (*nodeInfo, bool, error) {
+func linkDesc(ctx context.Context, c cid.Cid, name string, dserv format.NodeGetter) (*nodeInfo, bool, error) {
 	var rrd interface {
 		io.ReadSeeker
 	}
