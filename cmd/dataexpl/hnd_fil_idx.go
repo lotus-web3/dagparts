@@ -686,7 +686,7 @@ func (h *dxhnd) handleDeal(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			var meta metadata.Metadata
+			var meta = metadata.Default.New()
 
 			func() {
 				defer func() {

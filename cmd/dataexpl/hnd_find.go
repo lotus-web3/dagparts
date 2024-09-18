@@ -57,7 +57,7 @@ func (h *dxhnd) handleFind(w http.ResponseWriter, r *http.Request) {
 
 	for _, result := range resp.MultihashResults {
 		for _, providerResult := range result.ProviderResults {
-			var meta metadata.Metadata
+			var meta = metadata.Default.New()
 			if err := meta.UnmarshalBinary(providerResult.Metadata); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
