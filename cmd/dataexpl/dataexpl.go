@@ -10,7 +10,6 @@ import (
 	"github.com/filecoin-project/lotus/api/client"
 	"github.com/filecoin-project/lotus/chain/actors/adt"
 	"github.com/filecoin-project/lotus/chain/actors/builtin/market"
-	"github.com/filecoin-project/lotus/node/repo"
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/ipfs/go-cid"
 	cbor "github.com/ipfs/go-ipld-cbor"
@@ -33,7 +32,6 @@ import (
 	"sync"
 
 	"github.com/gabriel-vasile/mimetype"
-	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	format "github.com/ipfs/go-ipld-format"
 	io2 "github.com/ipfs/go-unixfs/io"
@@ -66,9 +64,8 @@ type marketMiner struct {
 }
 
 type dxhnd struct {
-	api    lapi.Gateway
-	apiBss *apiBstoreServer
-	bs     bstore.Blockstore
+	api lapi.Gateway
+	bs  bstore.Blockstore
 
 	h host.Host
 
@@ -254,11 +251,6 @@ var dataexplCmd = &cli.Command{
 			return err
 		}
 
-		ainfo, err := cliutil.GetAPIInfo(cctx, repo.FullNode)
-		if err != nil {
-			return xerrors.Errorf("could not get API info: %w", err)
-		}
-
 		var lk sync.Mutex
 		var wg sync.WaitGroup
 		var mminers []marketMiner
@@ -339,17 +331,6 @@ var dataexplCmd = &cli.Command{
 		})
 
 		// setup server
-
-		aurl, err := cliutil.ApiAddrToUrl(ainfo.Addr)
-		if err != nil {
-			return err
-		}
-
-		apiBss := &apiBstoreServer{
-			remoteAddr: aurl,
-			stores:     map[uuid.UUID]bstore.Blockstore{},
-		}
-
 		dc, _ := lru.New(10_000_000)
 
 		h, err := libp2p.New()
@@ -371,7 +352,6 @@ var dataexplCmd = &cli.Command{
 			minerPids: pidMiners,
 
 			bs:        ctbstore.WithCache(bstore.NewAPIBlockstore(api)),
-			apiBss:    apiBss,
 			tempBsBld: ctbstore.NewTempBsBuilder(cctx.String("blk-cache")),
 
 			trackerFil: tracker,

@@ -84,7 +84,7 @@ func (h *dxhnd) handleViewIPFS(w http.ResponseWriter, r *http.Request) {
 
 func (h *dxhnd) getIpfs(ctx context.Context, dcid cid.Cid, path string) func(ss builder.SelectorSpec) (cid.Cid, format.DAGService, map[string]struct{}, func(), error) {
 	return func(ss builder.SelectorSpec) (cid.Cid, format.DAGService, map[string]struct{}, func(), error) {
-		lbs, err := bstore.NewLocalIPFSBlockstore(ctx, true)
+		lbs, err := ctbstore.NewLocalIPFSBlockstore(ctx, true)
 		if err != nil {
 			return cid.Cid{}, nil, nil, nil, err
 		}

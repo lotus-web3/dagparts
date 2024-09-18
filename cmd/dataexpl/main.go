@@ -4,7 +4,6 @@ import (
 	"github.com/urfave/cli/v2"
 	"os"
 
-	"github.com/filecoin-project/lotus/build"
 	logging "github.com/ipfs/go-log/v2"
 )
 
@@ -16,7 +15,7 @@ func main() {
 	app := &cli.App{
 		Name:    "dataexpl",
 		Usage:   "Filecoin data explorer",
-		Version: build.BuildVersion,
+		Version: "1",
 		Commands: []*cli.Command{
 			dataexplCmd,
 			computeClientMetaCmd,

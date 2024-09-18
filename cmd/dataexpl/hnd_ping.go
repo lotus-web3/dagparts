@@ -14,9 +14,9 @@ import (
 	"net/http"
 	"time"
 
+	httpapi "github.com/filecoin-project/kubo-api-client"
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/gorilla/mux"
-	httpapi "github.com/ipfs/go-ipfs-http-client"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 

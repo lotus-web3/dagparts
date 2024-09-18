@@ -23,6 +23,7 @@ import (
 	basicnode "github.com/ipld/go-ipld-prime/node/basic"
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
 	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
+	trustlessutils "github.com/ipld/go-trustless-utils"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
@@ -36,6 +37,13 @@ import (
 	bstore "github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/chain/types"
 )
+
+// Selector specifies ipld selector string
+//   - if the string starts with '{', it's interpreted as json selector string
+//     see https://ipld.io/specs/selectors/ and https://ipld.io/specs/selectors/fixtures/selector-fixtures-1/
+//   - otherwise the string is interpreted as ipld-selector-text-lite (simple ipld path)
+//     see https://github.com/ipld/go-ipld-selector-text-lite
+type Selector string
 
 type selGetter func(ss builder.SelectorSpec) (cid.Cid, format.DAGService, map[string]struct{}, func(), error)
 
@@ -125,7 +133,7 @@ const (
 	RetrResRetrievalTimeout
 )
 
-func (h *dxhnd) retrieveFil(ctx context.Context, apiStore blockstore.Blockstore, minerAddr address.Address, pieceCid, file cid.Cid, sel *lapi.Selector, retrDone func()) (func(), error) {
+func (h *dxhnd) retrieveFil(ctx context.Context, apiStore blockstore.Blockstore, minerAddr address.Address, pieceCid, file cid.Cid, sel *Selector, retrDone func()) (func(), error) {
 	maddr, err := GetAddrInfo(ctx, h.api, minerAddr)
 	if err != nil {
 		return nil, err
@@ -137,7 +145,7 @@ func (h *dxhnd) retrieveFil(ctx context.Context, apiStore blockstore.Blockstore,
 	}
 
 	lassie, err := lassie.NewLassie(ctx, lassie.WithHost(host), lassie.WithProviderAllowList(map[peer.ID]bool{}),
-		lassie.WithFinder(retriever.NewDirectCandidateFinder(host, []peer.AddrInfo{*maddr})))
+		lassie.WithCandidateSource(retriever.NewDirectCandidateSource([]types2.Provider{{Peer: *maddr}})))
 	if err != nil {
 		return nil, xerrors.Errorf("start lassie: %w", err)
 	}
@@ -163,8 +171,12 @@ func (h *dxhnd) retrieveFil(ctx context.Context, apiStore blockstore.Blockstore,
 	}
 
 	request := types2.RetrievalRequest{
+		Request: trustlessutils.Request{
+			Root:       file,
+			Duplicates: false,
+		},
+
 		RetrievalID: rid,
-		Cid:         file,
 		Selector:    rsn,
 		LinkSystem:  linkSystem,
 	}
@@ -189,7 +201,7 @@ func (h *dxhnd) retrieveFil(ctx context.Context, apiStore blockstore.Blockstore,
 	}, nil
 }
 
-func pathToSel(psel string, matchTraversal bool, sub builder.SelectorSpec) (lapi.Selector, error) {
+func pathToSel(psel string, matchTraversal bool, sub builder.SelectorSpec) (Selector, error) {
 	rs, err := SelectorSpecFromPath(Expression(psel), matchTraversal, sub)
 	if err != nil {
 		return "", xerrors.Errorf("failed to parse path-selector: %w", err)
@@ -202,7 +214,7 @@ func pathToSel(psel string, matchTraversal bool, sub builder.SelectorSpec) (lapi
 
 	fmt.Println(b.String())
 
-	return lapi.Selector(b.String()), nil
+	return Selector(b.String()), nil
 }
 
 // PathValidCharset is the regular expression fully matching a valid textselector
