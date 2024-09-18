@@ -83,6 +83,8 @@ type dxhnd struct {
 	tempBsBld *ctbstore.TempBsb
 
 	trackerFil *TrackerFil
+
+	lw *LassieWrapper
 }
 
 func (h *dxhnd) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -338,6 +340,11 @@ var dataexplCmd = &cli.Command{
 			return err
 		}
 
+		lw, err := NewLassieWrapper(h)
+		if err != nil {
+			return err
+		}
+
 		dh := &dxhnd{
 			api: api,
 			idx: idx,
@@ -355,6 +362,8 @@ var dataexplCmd = &cli.Command{
 			tempBsBld: ctbstore.NewTempBsBuilder(cctx.String("blk-cache")),
 
 			trackerFil: tracker,
+
+			lw: lw,
 		}
 
 		m := mux.NewRouter()

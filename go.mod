@@ -33,6 +33,7 @@ require (
 	github.com/ipld/go-car v0.6.2
 	github.com/ipld/go-codec-dagpb v1.6.0
 	github.com/ipld/go-ipld-prime v0.21.0
+	github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20230102063945-1a409dc236dd
 	github.com/ipld/go-trustless-utils v0.4.1
 	github.com/ipni/go-libipni v0.6.13
 	github.com/libp2p/go-libp2p v0.36.3

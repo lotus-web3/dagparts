@@ -54,7 +54,7 @@ func (h *dxhnd) handleViewFil(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// retr root
-	g := h.getFilRetrieval(h.tempBsBld, r, ma, pcid, dcid)
+	g := h.getFilRetrieval(r.Context(), ma, dcid, vars["path"])
 	h.handleViewInner(w, r, g, map[string]interface{}{
 		"filRetrieval": true,
 		"provider":     ma,
